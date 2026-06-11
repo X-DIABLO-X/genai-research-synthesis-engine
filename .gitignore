@@ -1,0 +1,13 @@
+.env
+.tmp-edge-cdp
+/backend/node_modules
+/frontend/node_modules
+/frontend/dist
+/frontend/build
+backend/.env
+frontend/.env
+backend/.pytest_cache
+**/__pycache__/*
+backend/storage/uploads/*
+backend/research_synthesis.db
+.claude
