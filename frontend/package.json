@@ -1,0 +1,28 @@
+{
+  "name": "research-synthesis-engine",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "ogl": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-markdown": "latest",
+    "remark-gfm": "latest",
+    "three": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/three": "^0.184.1"
+  }
+}
