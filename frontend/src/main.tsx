@@ -1,6 +1,8 @@
 import React, { FormEvent, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowRight, CheckCircle2, Loader2, Play, Search, Upload } from "lucide-react";
+import { ArrowRight, Bot, CheckCircle2, Download, Loader2, MessageSquareText, Play, Search, Send, Upload } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import "./styles.css";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
@@ -33,6 +35,11 @@ type Brief = {
   validation_errors: string[];
 };
 
+type ChatMessage = {
+  role: "assistant" | "user";
+  content: string;
+};
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     headers: options?.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
@@ -56,6 +63,9 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
+  const [chatInput, setChatInput] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const selectedPapers = useMemo(() => papers.filter((_, index) => selected[index]), [papers, selected]);
 
@@ -138,6 +148,12 @@ function App() {
       setStatus("Synthesizing the cited brief...");
       const nextBrief = await api<Brief>(`/api/projects/${projectId}/synthesize`, { method: "POST" });
       setBrief(nextBrief);
+      setMessages([
+        {
+          role: "assistant",
+          content: "The cited brief is ready. Ask about findings, conflicts, limitations, or which papers carry the most evidence.",
+        },
+      ]);
       setStage("brief");
       setStatus(nextBrief.validation_errors.length ? "Brief generated with validation warnings." : "Brief generated successfully.");
     } catch (error) {
@@ -146,6 +162,35 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function runChat(event?: FormEvent) {
+    event?.preventDefault();
+    if (!projectId || !chatInput.trim()) return;
+
+    const nextMessages = [...messages, { role: "user" as const, content: chatInput.trim() }];
+    setMessages(nextMessages);
+    setChatInput("");
+    setChatBusy(true);
+
+    try {
+      const response = await api<{ reply: string }>(`/api/projects/${projectId}/chat`, {
+        method: "POST",
+        body: JSON.stringify({ messages: nextMessages }),
+      });
+      setMessages([...nextMessages, { role: "assistant", content: response.reply }]);
+    } catch (error) {
+      setMessages([
+        ...nextMessages,
+        { role: "assistant", content: `Chat failed: ${(error as Error).message}` },
+      ]);
+    } finally {
+      setChatBusy(false);
+    }
+  }
+
+  function exportUrl(format: string) {
+    return projectId && brief ? `${API_URL}/api/briefs/${brief.id}/export?format=${format}` : "#";
   }
 
   return (
@@ -262,41 +307,106 @@ function App() {
         ) : null}
 
         {stage === "brief" && brief ? (
-          <section className="panel-grid brief-grid">
-            <article className="workflow-panel wide">
-              <span className="eyebrow">Executive summary</span>
-              <h2>Research brief #{brief.id}</h2>
-              <p>{brief.executive_summary}</p>
-              {brief.validation_errors.length ? <div className="warning-box">{brief.validation_errors.join(" ")}</div> : null}
-            </article>
-            {brief.sections.map((section) => (
-              <article className="workflow-panel" key={section.theme}>
-                <div className="section-head">
-                  <h2>{section.theme}</h2>
-                  <span className="score-chip">{section.consensus_status}</span>
+          <>
+            <section className="brief-chat-layout">
+              <aside className="brief-pane">
+                <div className="brief-pane-head">
+                  <div>
+                    <span className="eyebrow">Cited brief</span>
+                    <h2>Research brief #{brief.id}</h2>
+                  </div>
+                  <div className="export-row">
+                    {["markdown", "docx", "bibtex", "ris", "csl-json"].map((format) => (
+                      <a className="icon-link" href={exportUrl(format)} key={format}>
+                        <Download size={12} />
+                        {format}
+                      </a>
+                    ))}
+                  </div>
                 </div>
-                <p>{section.summary || "No section summary returned yet."}</p>
-                <ul className="claim-list">
-                  {section.claims.map((claim, index) => (
-                    <li key={`${section.theme}-${index}`}>
-                      <strong>{claim.paper_title || "Stored evidence"}</strong>
-                      <span>{claim.text}</span>
-                    </li>
+                <div className="brief-scroll">
+                  <MarkdownBlock className="executive-summary" content={brief.executive_summary} />
+                  {brief.validation_errors.length ? <div className="warning-box">{brief.validation_errors.join(" ")}</div> : null}
+                  {brief.sections.map((section) => (
+                    <article className="workflow-panel brief-section-card" key={section.theme}>
+                      <div className="section-head">
+                        <h2>{section.theme}</h2>
+                        <span className="score-chip">{section.consensus_status}</span>
+                      </div>
+                      {section.summary ? <MarkdownBlock content={section.summary} /> : null}
+                      <ul className="claim-list">
+                        {section.claims.map((claim, index) => (
+                          <li key={`${section.theme}-${index}`}>
+                            <strong>{claim.paper_title || "Stored evidence"}</strong>
+                            <MarkdownBlock content={claim.text} />
+                            <span className="claim-source">
+                              {claim.section || "Unknown section"} {claim.page ? `· p. ${claim.page}` : ""}
+                            </span>
+                            <div className="citation-row">
+                              {claim.citations.map((citation) => (
+                                <span className="score-chip" key={citation}>{citation}</span>
+                              ))}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
                   ))}
-                </ul>
-              </article>
-            ))}
-          </section>
-        ) : null}
+                </div>
+              </aside>
 
-        {stage === "brief" && brief ? (
-          <div className="status-pill success-pill">
-            <CheckCircle2 size={14} />
-            Project {brief.project_id} synthesized into a traceable brief.
-          </div>
+              <section className="chat-pane">
+                <header className="chat-header">
+                  <div>
+                    <span className="eyebrow">Research assistant</span>
+                    <h2>Grounded chat</h2>
+                  </div>
+                  <div className="status-pill success-pill">
+                    <CheckCircle2 size={14} />
+                    Project {brief.project_id} ready
+                  </div>
+                </header>
+                <div className="chat-messages">
+                  {messages.map((message, index) => (
+                    <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>
+                      {message.role === "assistant" ? <div className="message-avatar"><Bot size={14} /></div> : null}
+                      <div className="message-body">
+                        <div className="message-bubble">
+                          {message.role === "assistant" ? <MarkdownBlock content={message.content} /> : message.content}
+                        </div>
+                        <div className="message-meta">
+                          {message.role === "assistant" ? "Grounded in the brief" : "Question sent"}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <form className="chat-composer" onSubmit={runChat}>
+                  <MessageSquareText size={16} />
+                  <input
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    placeholder="Ask what the brief found, where the papers disagree, or which citations matter most..."
+                  />
+                  <button className="primary-button" disabled={chatBusy || !chatInput.trim()} type="submit">
+                    {chatBusy ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+                    Send
+                  </button>
+                </form>
+              </section>
+            </section>
+          </>
         ) : null}
       </section>
     </main>
+  );
+}
+
+function MarkdownBlock({ content, className = "" }: { content: string; className?: string }) {
+  return (
+    <div className={`markdown-block ${className}`.trim()}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
   );
 }
 
