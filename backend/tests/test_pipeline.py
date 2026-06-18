@@ -3,15 +3,23 @@ import httpx
 
 from app.models import Brief, Claim, Paper, Passage, Project
 from app.services.claims import extract_claims
-from app.services.discovery import _score
+from app.services.discovery import _best_title_match, _score, discover
 from app.services.export import export_bibtex, export_csl_json, export_ris
 from app.services.synthesis import validate_brief
-from app.schemas.api import DiscoveryPaper
+from app.schemas.api import DiscoveryPaper, DiscoveryRequest
 
 
 def test_discovery_score_rewards_pdf_and_query_match():
     paper = DiscoveryPaper(title="Retrieval augmented generation for citations", abstract="Citations improve grounded synthesis.", source_provider="test", pdf_url="x")
     assert _score("citation grounded synthesis", paper) > 0.4
+
+
+def test_best_title_match_prefers_close_seed_title():
+    exact = DiscoveryPaper(title="MemLong: Memory-Augmented Retrieval for Long Text Generation", source_provider="semantic_scholar")
+    weak = DiscoveryPaper(title="A survey of retrieval methods", source_provider="semantic_scholar")
+    match = _best_title_match("MemLong: Memory-Augmented Retrieval for Long Text Generation", [weak, exact])
+    assert match is exact
+    assert match.relevance_score >= 0.78
 
 
 def test_brief_validation_rejects_unsourced_claim():
@@ -80,3 +88,51 @@ async def test_claim_extraction_falls_back_when_provider_errors(db_session, monk
 
     count = await extract_claims(db_session, project.id)
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_prefers_llm_seeded_titles(monkeypatch):
+    async def fake_plan(question: str):
+        return {
+            "queries": ["memory augmented retrieval"],
+            "paper_titles": ["MemLong: Memory-Augmented Retrieval for Long Text Generation"],
+        }
+
+    async def fake_seed_fetch(req, seed_titles, per_title_limit=5):
+        assert seed_titles[0] == "MemLong: Memory-Augmented Retrieval for Long Text Generation"
+        return [
+            DiscoveryPaper(
+                title="MemLong: Memory-Augmented Retrieval for Long Text Generation",
+                abstract="A memory-augmented long-context retrieval method.",
+                source_provider="semantic_scholar",
+                relevance_score=0.91,
+            )
+        ]
+
+    async def fake_semantic_search(req, query=None, limit=None):
+        return [
+            DiscoveryPaper(
+                title="Generic survey on information retrieval",
+                abstract="Broad background material.",
+                source_provider="semantic_scholar",
+                relevance_score=0.32,
+            )
+        ]
+
+    async def fake_arxiv_search(req, query=None, limit=None):
+        return []
+
+    async def fake_rerank(question, papers):
+        return {0: 0.96, 1: 0.25}
+
+    monkeypatch.setattr("app.services.discovery._llm_discovery_plan", fake_plan)
+    monkeypatch.setattr("app.services.discovery._fetch_seed_papers", fake_seed_fetch)
+    monkeypatch.setattr("app.services.discovery.search_semantic_scholar", fake_semantic_search)
+    monkeypatch.setattr("app.services.discovery.search_arxiv", fake_arxiv_search)
+    monkeypatch.setattr("app.services.discovery._llm_rerank", fake_rerank)
+
+    req = DiscoveryRequest(question="Memory layers in long-context LLMs and better data retrieval", depth="high", max_results=5)
+    papers = await discover(req)
+    assert papers
+    assert papers[0].title == "MemLong: Memory-Augmented Retrieval for Long Text Generation"
+    assert papers[0].relevance_score >= 0.9
