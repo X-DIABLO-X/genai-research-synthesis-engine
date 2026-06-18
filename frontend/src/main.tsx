@@ -1445,6 +1445,12 @@ function ResearchWorkspace(props: {
                   const isLast = index === messages.length - 1;
                   const isStreamingAssistant =
                     isLast && message.role === "assistant" && chatBusy && chatStage === "streaming";
+                  // The pending-typing visual now lives outside the
+                  // messages list (see below) so it appears the moment
+                  // the user hits send — before any assistant bubble
+                  // exists. We keep this flag so the standalone bubble
+                  // below can still drive its meta-line copy, but the
+                  // inline map no longer renders it.
                   const isPendingAssistant =
                     isLast && message.role === "assistant" && chatBusy && (chatStage === "searching" || chatStage === "drafting");
                   return (
@@ -1488,6 +1494,31 @@ function ResearchWorkspace(props: {
                     </div>
                   );
                 })}
+                {/* Standalone typing indicator: appears the moment a
+                    chat request is in flight, independent of which
+                    message happens to be last in the list. Without this,
+                    there is a window between the user hitting send and
+                    the empty assistant bubble being appended where the
+                    thread looks frozen. */}
+                {chatBusy && (chatStage === "searching" || chatStage === "drafting") ? (
+                  <div className="chat-message assistant" aria-live="polite">
+                    <div className="message-avatar"><Bot size={15} /></div>
+                    <div>
+                      <div className="message-bubble typing-bubble">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                      <div className="message-meta">
+                        <strong>Synthora</strong>
+                        <span>·</span>
+                        <span>
+                          {chatStage === "searching" ? "Searching the brief…" : "Drafting answer…"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
               {messages.length <= 1 && !chatBusy ? (
                 <div className="chat-suggestions">
