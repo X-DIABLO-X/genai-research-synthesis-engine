@@ -68,8 +68,8 @@ jobs:
         run: |
           sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no "$VPS_USERNAME@$VPS_HOST" "
             cd '$VPS_PATH' &&
-            docker compose up -d --force-recreate &&
-            docker compose ps
+            docker compose -f docker-compose.prod.yml up -d --build --force-recreate &&
+            docker compose -f docker-compose.prod.yml ps
           "
 
       - name: Verify local origin on VPS
@@ -83,12 +83,13 @@ jobs:
           sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no "$VPS_USERNAME@$VPS_HOST" "
             for attempt in \$(seq 1 30); do
               if curl -k --fail --silent --show-error --head -H 'Host: synthora.cypherion.tech' https://127.0.0.1/ >/dev/null &&
+                 curl --fail --silent --show-error http://127.0.0.1:34322/health >/dev/null &&
                  curl --fail --silent --show-error --head http://127.0.0.1:34321 >/dev/null; then
                 exit 0
               fi
               sleep 10
             done
             cd '$VPS_PATH' &&
-            docker compose ps &&
-            docker compose logs --tail=80 frontend backend
+            docker compose -f docker-compose.prod.yml ps &&
+            docker compose -f docker-compose.prod.yml logs --tail=80 frontend backend
           "

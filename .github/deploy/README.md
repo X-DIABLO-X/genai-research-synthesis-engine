@@ -24,5 +24,5 @@ On every push to `main` and on manual runs:
 1. Checks out the repo.
 2. Recreates `backend/.env` from `BACKEND_ENV_FILE`.
 3. Syncs the repository to the VPS with `rsync`.
-4. Runs `docker compose up -d --force-recreate` in the VPS project directory.
-5. Verifies that the frontend is reachable on the VPS.
+4. Runs `docker compose -f docker-compose.prod.yml up -d --build --force-recreate` in the VPS project directory.
+5. Verifies that both the frontend and backend health endpoint are reachable on the VPS.

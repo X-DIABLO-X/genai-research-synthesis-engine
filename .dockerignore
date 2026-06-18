@@ -1,0 +1,14 @@
+.git
+.github
+.claude
+.tmp-edge-cdp
+backend/.env
+backend/.pytest_cache
+backend/__pycache__
+backend/storage/uploads
+backend/research_synthesis.db
+frontend/node_modules
+frontend/dist
+frontend/build
+frontend/.env
+**/__pycache__
