@@ -34,7 +34,8 @@ import ParticleTitle from "./components/ParticleTitle";
 import particleField from "./assets/research-particle-field.png";
 import "./styles.css";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
+const isLocalhost = typeof window !== "undefined" && /^(localhost|127\\.0\\.0\\.1)$/i.test(window.location.hostname);
+const API_URL = import.meta.env.VITE_API_URL || (isLocalhost ? "http://127.0.0.1:8000" : "");
 
 // ── Web Speech API typings (subset) ─────────────────────────────────
 type SpeechRecognitionResultList = {

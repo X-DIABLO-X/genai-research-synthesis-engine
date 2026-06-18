@@ -1,0 +1,85 @@
+name: Deploy To VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write backend env
+        shell: bash
+        run: |
+          cat > backend/.env <<'EOF'
+          ${{ secrets.BACKEND_ENV_FILE }}
+          EOF
+
+      - name: Install deploy tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass rsync
+
+      - name: Ensure remote directory
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+        run: |
+          sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no "$VPS_USERNAME@$VPS_HOST" "mkdir -p '$VPS_PATH'"
+
+      - name: Sync repository to VPS
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+        run: |
+          sshpass -p "$VPS_PASSWORD" rsync -az --delete \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.tmp-edge-cdp/' \
+            --exclude '.claude/' \
+            "./" "$VPS_USERNAME@$VPS_HOST:$VPS_PATH/"
+
+      - name: Restart services on VPS
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+        run: |
+          sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no "$VPS_USERNAME@$VPS_HOST" "
+            cd '$VPS_PATH' &&
+            docker compose up -d --force-recreate &&
+            docker compose ps
+          "
+
+      - name: Verify local origin on VPS
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+        run: |
+          sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no "$VPS_USERNAME@$VPS_HOST" "
+            curl -k --fail --silent --show-error --head -H 'Host: synthora.cypherion.tech' https://127.0.0.1/ >/dev/null &&
+            curl --fail --silent --show-error --head http://127.0.0.1:34321 >/dev/null
+          "

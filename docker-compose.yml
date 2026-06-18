@@ -25,7 +25,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "34322:8000"
     volumes:
       - ./backend:/app
       - backend-storage:/app/storage
@@ -37,10 +37,8 @@ services:
     image: node:24-slim
     working_dir: /app
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
-    environment:
-      VITE_API_URL: http://localhost:8000
     ports:
-      - "5173:5173"
+      - "34321:5173"
     volumes:
       - ./frontend:/app
     depends_on:
