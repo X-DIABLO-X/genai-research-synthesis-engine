@@ -1,3 +1,4 @@
+import asyncio
 import re
 from pathlib import Path
 from urllib.parse import urlparse
@@ -52,32 +53,54 @@ def _chunk_text(text: str, size: int = 1200) -> list[tuple[int, int, str]]:
 async def _download_missing_project_pdfs(db: Session, project_id: int) -> None:
     settings = get_settings()
     papers = db.query(Paper).filter(Paper.project_id == project_id, Paper.pdf_url.isnot(None)).all()
+    pending: list[tuple[Paper, Path]] = []
     for paper in papers:
         has_document = db.query(Document).filter(Document.paper_id == paper.id).first()
         if has_document:
-            continue
-        try:
-            async with httpx.AsyncClient(timeout=45, follow_redirects=True) as client:
-                response = await client.get(paper.pdf_url)
-            response.raise_for_status()
-            if "pdf" not in response.headers.get("content-type", "").lower() and not response.content.startswith(b"%PDF"):
-                continue
-        except Exception:
             continue
         parsed_name = Path(urlparse(paper.pdf_url).path).name or f"paper-{paper.id}.pdf"
         if not parsed_name.lower().endswith(".pdf"):
             parsed_name = f"{parsed_name}.pdf"
         safe_name = f"project-{project_id}-paper-{paper.id}-{parsed_name}"
         storage_path = settings.upload_dir / safe_name
+        pending.append((paper, storage_path))
+
+    if not pending:
+        return
+
+    timeout = httpx.Timeout(18.0, connect=5.0, read=12.0, write=12.0)
+    semaphore = asyncio.Semaphore(3)
+
+    async def fetch(paper: Paper, storage_path: Path) -> Document | None:
+        try:
+            async with semaphore:
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                    response = await client.get(paper.pdf_url)
+                response.raise_for_status()
+                if "pdf" not in response.headers.get("content-type", "").lower() and not response.content.startswith(b"%PDF"):
+                    return None
+        except Exception:
+            return None
+
         storage_path.write_bytes(response.content)
-        db.add(Document(paper_id=paper.id, filename=parsed_name, storage_path=str(storage_path), status="downloaded"))
+        return Document(
+            paper_id=paper.id,
+            filename=storage_path.name.split(f"project-{project_id}-paper-{paper.id}-", 1)[-1],
+            storage_path=str(storage_path),
+            status="downloaded",
+        )
+
+    downloaded = await asyncio.gather(*(fetch(paper, path) for paper, path in pending))
+    for document in downloaded:
+        if document:
+            db.add(document)
     db.commit()
 
 
 async def _try_grobid(path: Path) -> str | None:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0, read=15.0, write=15.0)) as client:
             with path.open("rb") as fh:
                 files = {"input": (path.name, fh, "application/pdf")}
                 response = await client.post(f"{settings.grobid_url}/api/processFulltextDocument", files=files)
@@ -131,6 +154,11 @@ async def ingest_project(db: Session, project_id: int) -> dict:
     passages_created = 0
     for document in documents:
         path = Path(document.storage_path)
+        if document.status == "parsed" and document.parsed_text and path.exists():
+            continue
+        if not path.exists():
+            document.status = "missing"
+            continue
         tei = await _try_grobid(path)
         if tei:
             text, section_spans = _text_from_tei(tei)

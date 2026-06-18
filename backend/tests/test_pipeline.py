@@ -5,6 +5,7 @@ from app.models import Brief, Claim, Paper, Passage, Project
 from app.services.claims import extract_claims
 from app.services.discovery import _best_title_match, _score, discover
 from app.services.export import export_bibtex, export_csl_json, export_ris
+from app.services.ingestion import ingest_project
 from app.services.synthesis import validate_brief
 from app.schemas.api import DiscoveryPaper, DiscoveryRequest
 
@@ -136,3 +137,39 @@ async def test_discover_prefers_llm_seeded_titles(monkeypatch):
     assert papers
     assert papers[0].title == "MemLong: Memory-Augmented Retrieval for Long Text Generation"
     assert papers[0].relevance_score >= 0.9
+
+
+@pytest.mark.asyncio
+async def test_ingest_project_skips_already_parsed_documents(db_session, monkeypatch, tmp_path):
+    project = Project(name="Parsed", question="Q")
+    db_session.add(project)
+    db_session.flush()
+    paper = Paper(project_id=project.id, title="A Study", authors=[{"name": "Ada Lovelace"}], year=2024, venue="Journal")
+    db_session.add(paper)
+    db_session.flush()
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 test")
+    document = __import__("app.models", fromlist=["Document"]).Document(
+        paper_id=paper.id,
+        filename="paper.pdf",
+        storage_path=str(pdf_path),
+        status="parsed",
+        parsed_text="already parsed",
+        page_map=[{"page": 1, "char_start": 0, "char_end": 14}],
+    )
+    db_session.add(document)
+    db_session.add(Passage(paper_id=paper.id, document_id=document.id, section="Body", page=1, page_unknown=False, text="already parsed", char_start=0, char_end=14))
+    db_session.commit()
+
+    async def no_download(*args, **kwargs):
+        return None
+
+    async def fail_grobid(*args, **kwargs):
+        raise AssertionError("grobid should not run for parsed documents")
+
+    monkeypatch.setattr("app.services.ingestion._download_missing_project_pdfs", no_download)
+    monkeypatch.setattr("app.services.ingestion._try_grobid", fail_grobid)
+
+    result = await ingest_project(db_session, project.id)
+    assert result["documents"] == 1
+    assert result["passages"] == 0

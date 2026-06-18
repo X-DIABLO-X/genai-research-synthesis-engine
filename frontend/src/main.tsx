@@ -139,6 +139,16 @@ type ChatMessage = {
   content: string;
 };
 
+function normalizeApiError(detail: string, statusText: string) {
+  const trimmed = detail.trim();
+  const lowered = trimmed.toLowerCase();
+  if (!trimmed) return statusText;
+  if (lowered.startsWith("<!doctype html") || lowered.startsWith("<html") || lowered.includes("<body")) {
+    return "The research server timed out while processing this step. Please retry; partial progress may already be saved.";
+  }
+  return trimmed;
+}
+
 async function api<T>(path: string, options?: RequestInit, attempt = 0): Promise<T> {
   try {
     const response = await fetch(`${API_URL}${path}`, {
@@ -147,7 +157,7 @@ async function api<T>(path: string, options?: RequestInit, attempt = 0): Promise
     });
     if (!response.ok) {
       const detail = await response.text();
-      throw new Error(detail || response.statusText);
+      throw new Error(normalizeApiError(detail, response.statusText));
     }
     return response.json() as Promise<T>;
   } catch (error) {
